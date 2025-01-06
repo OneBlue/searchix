@@ -67,7 +67,7 @@ class Email(IndexEntry):
     original_path = CharField(max_length=1024, editable=False, unique=True)
 
     search = GeneratedField(db_persist=True,
-                            expression=SearchVector('content_text', 'subject',  config='english'),
+                            expression=SearchVector('content_text', 'content_html', 'subject',  config='english'),
                             output_field=SearchVectorField())
     class Meta:
         indexes = [
@@ -88,8 +88,11 @@ class EmailHeader(IndexEntry):
 
 
 class EmailAttachment(IndexEntry):
-    entry_type = IndexEntry.ClassType.EmailAttachment
+    def admin_link(self) -> str:
+        return f'/searchix/emailattachment/{self.id}/change'
 
+
+    entry_type = IndexEntry.ClassType.EmailAttachment
     source_email = ForeignKey(Email, on_delete=CASCADE)
     file_name = CharField(max_length=1024, null=True, blank=True)
     content_type = CharField(max_length=1024, null=True, blank=True)
