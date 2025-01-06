@@ -5,12 +5,16 @@ import email
 import traceback
 import os
 import dateutil
+import psycopg.errors
 from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 from django.db import transaction
+from django.db.utils import OperationalError
+from psycopg.errors import ProgramLimitExceeded
 
 import email.header
 import logging
 import re
+from html2text import HTML2Text
 
 logger = logging.Logger(__name__)
 
@@ -95,6 +99,30 @@ def decode_date(value: str, entry: Email) -> datetime:
 
             return None
 
+
+def extract_text_from_html(content: str):
+    convert = HTML2Text()
+    convert.ignore_images = True
+    convert.ignore_links = True
+    convert.ignore_emphasis = True
+    convert.ignore_tables = True
+    convert.single_line_break = True
+    convert.wrap_links = True
+    convert.wrap_lists = True
+
+    return convert.handle(re.sub('<img .*?>', 'removed-image', content)) # Remove potential images
+
+def process_text_content(content: str):
+    # Try to guess if content is html
+    if any(e in content.casefold() for e in ['<html', '<head', '<meta', '<img']):
+        return extract_text_from_html(content)
+    else:
+        return content
+
+def reduce_body_size(content: str) -> str:
+    # Remove http links
+    return re.sub(r'http\S+', '<removed-link>', content)
+
 @transaction.atomic
 def visit_email(fd, path: str) -> bool:
     if Email.objects.filter(original_path=path).exists():
@@ -132,7 +160,7 @@ def visit_email(fd, path: str) -> bool:
                 continue
 
             if type == 'text/plain':
-                new_entry.content_text = utf8_decode(entry.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE]
+                new_entry.content_text = process_text_content(utf8_decode(entry.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE])
             elif type == 'text/html':
                 new_entry.content_html= utf8_decode(entry.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE]
             elif type == 'text/calendar':
@@ -141,9 +169,47 @@ def visit_email(fd, path: str) -> bool:
                 new_entry.add_indexing_note(f'Unknown part content type while reading {path}. Content-Type={type}, disposition={disposition}')
                 logger.warning(f'Unknown part content type while reading {path}. Content-Type={type}, disposition={disposition}')
     else:
-        new_entry.content_text = utf8_decode(content.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE]
+        if 'Content-Type' in content and 'html' in decode_header(content['Content-Type'], new_entry).casefold():
+            new_entry.content_html = process_text_content(utf8_decode(content.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE])
+        else:
+            new_entry.content_text = process_text_content(utf8_decode(content.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE])
 
-    new_entry.save()
+    # Generate a text content field for easier search if none was available
+    if new_entry.content_text is None and new_entry.content_html:
+        new_entry.content_text = extract_text_from_html(new_entry.content_html)
+
+    def attempt_save() -> bool:
+        try:
+            with transaction.atomic():
+                new_entry.save()
+                return True
+
+        except OperationalError as e:
+            if isinstance(e.__cause__, ProgramLimitExceeded):  # Hit when the index row is too big
+                return False
+            else:
+                raise
+
+    if not attempt_save():
+        previous_body = new_entry.content_text
+        new_entry.content_text = reduce_body_size(previous_body)
+        new_entry.add_indexing_note(f'Exceeded index size, reducing email content (original size: {len(previous_body)}, reduced: {len(new_entry.content_text)})')
+        
+        note = None
+        while True:
+            if attempt_save():
+                break
+
+            if len(new_entry.content_text) <= 100:
+                raise RuntimeError('Failed to save context_text for email: {path}')
+
+            new_entry.content_text = new_entry.content_text[:len(new_entry.content_text) - 100]
+            note = f'Entry still too big. Reduced size to: {len(new_entry.content_text)}'
+
+        if note is not None:
+            new_entry.add_indexing_note(note)
+            new_entry.save()
+
 
     for e in get_or_create_addresses(decode_header(content.get('To', ''), new_entry)):
         new_entry.to.add(e)
