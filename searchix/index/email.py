@@ -5,11 +5,10 @@ import email
 import traceback
 import os
 import dateutil
-import psycopg.errors
 from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 from django.db import transaction
 from django.db.utils import OperationalError
-from psycopg.errors import ProgramLimitExceeded
+from psycopg2.errors import ProgramLimitExceeded
 
 import email.header
 import logging
