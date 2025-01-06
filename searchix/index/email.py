@@ -49,7 +49,7 @@ def utf8_decode(value: bytes) -> str:
     # postgres doesn't accept null bytes in strings
     return value.decode('utf8', errors='replace').replace("\x00", "\uFFFD")
 
-def decode_header(header: str, entry: Email, filter: str = None) -> str:
+def decode_header(header: str, entry: Email) -> str:
     if header is None:
         return None
 
@@ -60,26 +60,9 @@ def decode_header(header: str, entry: Email, filter: str = None) -> str:
         else:
             return value
     try:
-        decoded = [(decode_value(value), encoding) for value, encoding in email.header.decode_header(header)]
+        decoded = [decode_value(value) for value, _ in email.header.decode_header(header)]
+        return ''.join(decoded)
 
-        if filter is not None:
-            # prefer utf-8 values matching the filter
-            result = next((value for value, encoding in decoded if encoding is not None and encoding.casefold() == 'utf-8' and filter in value), None)
-            if result is not None:
-                return result
-
-            # Then look for any value matching the filter
-            result = next((value for value, encoding in decoded if filter in value), None)
-            if result is not None:
-                return result
-
-        # Prefer utf8-values
-        result = next((value for value, encoding in decoded if encoding is not None and encoding.casefold() == 'utf-8'), None)
-        if result is not None:
-            return result
-
-        # Otherwise look for any non-empty value, defaulting on the first one
-        return next((value for value, encoding in decoded if value), None) or decoded[0][0]
     except:
         message = f'Failed to parse header "{header}" from email {entry.message_id}: {traceback.format_exc()}'
         logger.warning(message)

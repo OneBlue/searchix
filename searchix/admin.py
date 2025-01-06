@@ -29,7 +29,6 @@ for name, obj in {name: obj for (name, obj) in inspect.getmembers(models)}.items
 
         admin.site.register(obj, AdminClass)
 
-
 def highlight_search_term(content: str, search_term: str, max_size: int, link: str = None):
     match_position = content.casefold().find(search_term.casefold())
     if match_position < 0 :
@@ -62,6 +61,9 @@ def make_link(entry, text: str):
 
     return format_html('<a href="' + entry.admin_link() + '">{}</a>', text)
 
+def make_list_link(entries, text_method) -> str:
+    return format_html(', '.join(f'<a href="{e.admin_link()}">{escape(text_method(e))} </a>' for e in entries))
+
 class Email(admin.ModelAdmin):
     class ObsoleteFilter(admin.SimpleListFilter):
         title = 'Fuzzy search'
@@ -85,11 +87,17 @@ class Email(admin.ModelAdmin):
 
     list_display = ('_rank', '_subject', '_author', 'content_list')
 
-    readonly_fields = ('subject', 'date', '_from', 'message_id', '_in_reply_to', 'date', 'to', 'cc', 'content', '_indexing_log', 'original_path')
+    readonly_fields = ('subject', 'date', '_from', 'message_id', '_in_reply_to', 'date', '_to', '_cc', 'content', '_indexing_log', 'original_path')
     #link_fields = ('latest', )
 
     def _from(self, entry):
         return make_link(entry.author, entry.author.to_string())
+
+    def _to(self, entry):
+        return make_list_link(entry.to.all(), lambda e: e.to_string())
+
+    def _cc(self, entry):
+        return make_list_link(entry.cc.all(), lambda e: e.to_string())
 
     def _indexing_log(self, entry):
         return make_multiline_html(entry.indexing_log or '')
@@ -141,7 +149,8 @@ class Email(admin.ModelAdmin):
 
     def get_search_results(self, request, queryset, search_term):
         if not search_term:
-            return self.model.objects.all().order_by('id'), False
+            return queryset, False
+
         if False: # sqlite
             return self.model.objects.filter(
                     Q(subject__icontains=search_term) |
@@ -157,7 +166,7 @@ class Email(admin.ModelAdmin):
             rank = SearchRank(search_vectors, query=query)
 
             # Search the text index first
-            query = self.model.objects.filter(search=query).annotate(rank=rank).annotate(search_term=Value(search_term))
+            query = queryset.filter(search=query).annotate(rank=rank).annotate(search_term=Value(search_term))
 
             # Then add trigrams
             if request.environ.get('fuzzy_search', False):
