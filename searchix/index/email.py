@@ -36,8 +36,14 @@ def get_or_create_address_impl(name: str, address: str) -> EmailAddress:
         return entry
 
     if name and name not in entry.names():
-        logger.debug(f'Added name: "{name}" to email address: {entry}')
         entry.display_names = ','.join(entry.names() + [name])
+
+        if len(entry.display_names) > 1024:
+            logger.warning(f'Dropping name "{name}" from address {address}. Maximum size reached')
+            return entry
+        else:
+            logger.debug(f'Added name: "{name}" to email address: {entry}')
+
         entry.save()
 
     return entry
@@ -52,7 +58,7 @@ def utf8_decode(value: bytes) -> str:
     # postgres doesn't accept null bytes in strings
     return value.decode('utf8', errors='replace').replace("\x00", "\uFFFD")
 
-def decode_header(header: str, entry: Email) -> str:
+def decode_header(header: str, entry: Email, max_size: int) -> str:
     if header is None:
         return None
 
@@ -64,7 +70,13 @@ def decode_header(header: str, entry: Email) -> str:
             return value
     try:
         decoded = [decode_value(value) for value, _ in email.header.decode_header(header)]
-        return ''.join(decoded)
+        result = ''.join(decoded)
+
+        if max_size is not None and len(result) > max_size:
+            entry.add_indexing_note('Header is too long ({len(result)}) truncating to {max_size}')
+            result = result[:max_size]
+
+        return result
 
     except:
         message = f'Failed to parse header "{header}" from email {entry.message_id}: {traceback.format_exc()}'
@@ -74,26 +86,22 @@ def decode_header(header: str, entry: Email) -> str:
         return f'<decode-error>'
 
 def decode_date(value: str, entry: Email) -> datetime:
-    date = decode_header(value, entry)
+    date = decode_header(value, entry, max_size=None)
     if date is None:
-        message = f'Missing date'
-        logger.warning(message)
+        message = f'Missing date header'
         entry.add_indexing_note(message)
-
         return None
 
     try:
         return  parsedate_to_datetime(date)
     except ValueError:
         message = f'Non standard "{date}", {traceback.format_exc()}'
-        logger.warning(message)
         entry.add_indexing_note(message)
 
         try:
             return dateutil.parser.parse(date)
         except:
             message = f'Failed to parse "{date}", {traceback.format_exc()}'
-            logger.warning(message)
             entry.add_indexing_note(message)
 
             return None
@@ -136,9 +144,9 @@ def visit_email(fd, path: str) -> bool:
         return False
 
     new_entry = Email(message_id=message_id, original_path=path)
-    new_entry.subject = decode_header(content.get('Subject'), new_entry)
-    new_entry.in_reply_to = decode_header(content.get('In-Reply-To'), new_entry)
-    author = decode_header(content.get('From'), new_entry)
+    new_entry.subject = decode_header(content.get('Subject'), new_entry, 1024)
+    new_entry.in_reply_to = decode_header(content.get('In-Reply-To'), new_entry, 1024)
+    author = decode_header(content.get('From'), new_entry, 1024)
     new_entry.author = get_or_create_address(author) if author and author != '<decode-error>' else None
     new_entry.date = decode_date(content.get('Date'), new_entry)
 
@@ -164,11 +172,11 @@ def visit_email(fd, path: str) -> bool:
                 new_entry.content_html= utf8_decode(entry.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE]
             elif type == 'text/calendar':
                 pass # TODO
-            elif type != 'multipart/alternative' and type != 'multipart/mixed' and type != 'multipart/signed'  and disposition != 'inline':
+            elif type not in ['multipart/alternative', 'multipart/mixed', 'multipart/signed', 'multipart/report', 'message/delivery-status', 'message/rfc822']  and disposition != 'inline':
                 new_entry.add_indexing_note(f'Unknown part content type while reading {path}. Content-Type={type}, disposition={disposition}')
                 logger.warning(f'Unknown part content type while reading {path}. Content-Type={type}, disposition={disposition}')
     else:
-        if 'Content-Type' in content and 'html' in decode_header(content['Content-Type'], new_entry).casefold():
+        if 'Content-Type' in content and 'html' in decode_header(content['Content-Type'], new_entry, 1024).casefold():
             new_entry.content_html = process_text_content(utf8_decode(content.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE])
         else:
             new_entry.content_text = process_text_content(utf8_decode(content.get_payload(decode=True))[:settings.MAX_EMAIL_CONTENT_SIZE])
@@ -193,7 +201,7 @@ def visit_email(fd, path: str) -> bool:
         previous_body = new_entry.content_text
         new_entry.content_text = reduce_body_size(previous_body)
         new_entry.add_indexing_note(f'Exceeded index size, reducing email content (original size: {len(previous_body)}, reduced: {len(new_entry.content_text)})')
-        
+
         note = None
         while True:
             if attempt_save():
@@ -210,10 +218,10 @@ def visit_email(fd, path: str) -> bool:
             new_entry.save()
 
 
-    for e in get_or_create_addresses(decode_header(content.get('To', ''), new_entry)):
+    for e in get_or_create_addresses(decode_header(content.get('To', ''), new_entry, max_size=None)):
         new_entry.to.add(e)
 
-    for e in get_or_create_addresses(decode_header(content.get('CC', ''), new_entry)):
+    for e in get_or_create_addresses(decode_header(content.get('CC', ''), new_entry, max_size=None)):
         new_entry.cc.add(e)
 
     created_headers = 0
@@ -221,7 +229,7 @@ def visit_email(fd, path: str) -> bool:
         if header.lower() in ['date', 'subject', 'in-reply-to', 'from', 'to', 'cc', 'message-id']:
             continue
 
-        content = decode_header(content, new_entry)
+        content = decode_header(content, new_entry, 1024)
 
         new_header = EmailHeader(source_email=new_entry, name=header, value=content)
         new_header.save()
