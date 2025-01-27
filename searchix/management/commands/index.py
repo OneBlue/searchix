@@ -26,6 +26,12 @@ class Command(BaseCommand):
                 print('Created new entry')
             else:
                 print('Entry already indexed')
+        elif os.path.isfile(options['path']):
+            with open(options['path'], 'rb') as fd:
+                if email.visit_email(fd, options['path']):
+                    print('Created new entry')
+                else:
+                    print('Entry already indexed')
         else:
             created, existing, failed = email.visit_folder(os.path.realpath(options['path']), stop=stop_on_error, pdb=pdb)
             print(f'Created: {created}, existing; {existing}, failed: {failed}')

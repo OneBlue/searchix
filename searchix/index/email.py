@@ -49,8 +49,10 @@ def get_or_create_address_impl(name: str, address: str) -> EmailAddress:
     return entry
 
 def get_or_create_addresses(value: str) -> list:
-    if ',' in value:
-        return [get_or_create_address_impl(name, address) for name, address in getaddresses(value)]
+    if value is None:
+        return []
+    elif ',' in value:
+        return [get_or_create_address(e) for e in value.split(',') if e]
     else:
         return [get_or_create_address(value)]
 
@@ -159,7 +161,7 @@ def visit_email(fd, path: str) -> bool:
 
             if disposition is not None and 'attachment' in disposition:
                 attachment = EmailAttachment(source_email=new_entry,
-                                             file_name = entry.get_filename(),
+                                             file_name = decode_header(entry.get_filename(), new_entry, max_size = 1024),
                                              content_type = type,
                                              content = entry.get_payload(decode=True))
                 attachment.save()
@@ -218,10 +220,10 @@ def visit_email(fd, path: str) -> bool:
             new_entry.save()
 
 
-    for e in get_or_create_addresses(decode_header(content.get('To', ''), new_entry, max_size=None)):
+    for e in get_or_create_addresses(decode_header(content.get('To', None), new_entry, max_size=None)):
         new_entry.to.add(e)
 
-    for e in get_or_create_addresses(decode_header(content.get('CC', ''), new_entry, max_size=None)):
+    for e in get_or_create_addresses(decode_header(content.get('CC', None), new_entry, max_size=None)):
         new_entry.cc.add(e)
 
     created_headers = 0
