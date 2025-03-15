@@ -21,7 +21,7 @@ def get_id_fields(obj) -> list:
     return [e.name for e in obj._meta.get_fields() if type(e) in [models.ManyToManyField, models.ForeignKey]]
 
 for name, obj in {name: obj for (name, obj) in inspect.getmembers(models)}.items():
-    if inspect.isclass(obj) and not obj is Model and issubclass(obj, Model) and name not in ['Email', 'IndexEntry']:
+    if inspect.isclass(obj) and not obj is Model and issubclass(obj, Model) and name not in ['Email', 'IndexEntry', 'EmailAttachment']:
         class AdminClass(admin.ModelAdmin):
             raw_id_fields = get_id_fields(obj)
             search_fields = get_search_fields(obj)
@@ -62,6 +62,15 @@ def make_link(entry, text: str):
 
 def make_list_link(entries, text_method) -> str:
     return format_html(', '.join(f'<a href="{e.admin_link()}">{escape(text_method(e))} </a>' for e in entries))
+
+
+class EmailAttachment(admin.ModelAdmin):
+    raw_id_fields = get_id_fields(models.Email)
+
+    readonly_fields = ('source_email', 'file_name', 'content_type', 'download')
+
+    def download(self, entry):
+        return format_html(f'<a href="{entry.download_link()}">{escape(entry.file_name or "unnamed")} </a>')
 
 class Email(admin.ModelAdmin):
     class FuzzyFilter(admin.SimpleListFilter):
@@ -217,6 +226,7 @@ class Email(admin.ModelAdmin):
             return query.order_by('-rank'),False
 
 admin.site.register(models.Email, Email)
+admin.site.register(models.EmailAttachment, EmailAttachment)
 
 class IndexEntry(admin.ModelAdmin):
     def get_changelist(self, request, **kwargs):
