@@ -91,6 +91,9 @@ class EmailAttachment(IndexEntry):
     def admin_link(self) -> str:
         return f'/searchix/emailattachment/{self.id}/change'
 
+    def download_link(self) -> str:
+        return f'/download/attachment/{self.id}'
+
 
     entry_type = IndexEntry.ClassType.EmailAttachment
     source_email = ForeignKey(Email, on_delete=CASCADE)

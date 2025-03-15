@@ -3,7 +3,7 @@ from django.contrib.admin.views.main import ChangeList as ChangeListDefault
 from django.urls import reverse
 from django.db.models import *
 from django.contrib import admin
-from django.db.models import Max, Prefetch, F, FilteredRelation, Value, Q, F
+from django.db.models import Max, Prefetch, F, FilteredRelation, Value, Q, F, OuterRef
 from django.contrib.auth.models import User
 from django.db import connection
 from django.utils.html import escape, format_html
@@ -100,8 +100,24 @@ class Email(admin.ModelAdmin):
             if value:
                 return queryset.filter(author__address__trigram_similar=value)
 
+    class AttachmentFilter(admin.SimpleListFilter):
+        title = 'Attachments'
+        parameter_name = 'attachment'
 
-    list_filter = [FuzzyFilter, AddressFilter]
+        def lookups(self, request, model_admin):
+            return [('all', 'attachment only')]
+
+        def queryset(self, request, queryset):
+            value = self.value()
+
+            if value is None:
+                return queryset
+            else:
+                attachment_query = models.EmailAttachment.objects.filter(source_email=OuterRef('pk'))
+                return queryset.annotate(attachment=Exists(attachment_query)).filter(attachment=True)
+
+
+    list_filter = [FuzzyFilter, AttachmentFilter, AddressFilter]
     raw_id_fields = get_id_fields(models.Email)
     search_fields = ['id']
 
@@ -168,7 +184,8 @@ class Email(admin.ModelAdmin):
             return format_html('Found multiple: ' + ','.join(make_link(e, e.id) for e in matches))
 
     def attachments(self, entry):
-        return make_list_link(models.EmailAttachment.objects.filter(source_email=entry).all(), lambda e: e.file_name or 'unnamed')
+        attachments = models.EmailAttachment.objects.filter(source_email=entry).all()
+        return format_html(', '.join(f'<a href="{e.download_link()}">{escape(e.file_name or "unnamed")} </a> <a href="{e.admin_link()}">(object)</a>' for e in attachments))
 
     def get_search_results(self, request, queryset, search_term):
         if not search_term:
