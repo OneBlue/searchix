@@ -65,7 +65,7 @@ def make_list_link(entries, text_method) -> str:
 
 
 class EmailAttachment(admin.ModelAdmin):
-    raw_id_fields = get_id_fields(models.Email)
+    raw_id_fields = get_id_fields(models.EmailAttachment)
 
     readonly_fields = ('source_email', 'file_name', 'content_type', 'download')
 
