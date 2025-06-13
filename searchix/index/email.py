@@ -124,7 +124,9 @@ def extract_text_from_html(content: str):
 def process_text_content(content: str):
     # Try to guess if content is html
     if any(e in content.casefold() for e in ['<html', '<head', '<meta', '<img']):
-        return extract_text_from_html(content)
+
+        # Note: re-encoding needed because surrogates will break the sql statement
+        return extract_text_from_html(content).encode(errors='replace').decode(errors='replace')
     else:
         return content
 
