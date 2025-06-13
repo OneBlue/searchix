@@ -52,7 +52,7 @@ def highlight_search_term(content: str, search_term: str, max_size: int, link: s
         return format_html('{}<b>{}</b>{}', prefix, content[match_position:match_position + len(search_term)], suffix)
 
 def make_multiline_html(text: str):
-    return format_html(escape(text).replace('\n', '<br/>'))
+    return format_html(escape(text).replace('\n', '<br/>').replace('{', '{{').replace('}', '}}'))
 
 def make_link(entry, text: str):
     if entry is None:

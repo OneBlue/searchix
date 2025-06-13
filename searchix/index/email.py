@@ -119,14 +119,16 @@ def extract_text_from_html(content: str):
     convert.wrap_links = True
     convert.wrap_lists = True
 
-    return convert.handle(re.sub('<img .*?>', 'removed-image', content)) # Remove potential images
+    extracted = convert.handle(re.sub('<img .*?>', 'removed-image', content)) # Remove potential images
+
+    # Note: re-encoding needed because surrogates will break the sql statement
+    return extracted.encode(errors='replace').decode(errors='replace')
+
 
 def process_text_content(content: str):
     # Try to guess if content is html
     if any(e in content.casefold() for e in ['<html', '<head', '<meta', '<img']):
-
-        # Note: re-encoding needed because surrogates will break the sql statement
-        return extract_text_from_html(content).encode(errors='replace').decode(errors='replace')
+        return extract_text_from_html(content)
     else:
         return content
 
